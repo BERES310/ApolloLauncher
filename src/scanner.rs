@@ -24,10 +24,16 @@ pub struct ScannedItem {
     pub from_lnk: bool,
     pub missing: bool,
     pub manual: bool,
+    /// Id saved in the config for a manually added app. It keeps the card tied to its saved entry
+    /// even when the shortcut moves, is retargeted or is deleted, so the entry can still be removed.
+    pub stored_id: Option<String>,
 }
 
 impl ScannedItem {
     pub fn id(&self) -> String {
+        if let Some(id) = &self.stored_id {
+            return id.clone();
+        }
         if self.target.as_os_str().is_empty() {
             app_id(&self.source_path, &self.args)
         } else {
@@ -145,6 +151,7 @@ pub fn resolve_item(path: &Path, default_category: &str) -> Option<ScannedItem> 
             from_lnk: false,
             missing: !path.exists(),
             manual: false,
+            stored_id: None,
         });
     }
     let data = read_lnk(path)?;
@@ -163,6 +170,7 @@ pub fn resolve_item(path: &Path, default_category: &str) -> Option<ScannedItem> 
         from_lnk: true,
         missing,
         manual: false,
+        stored_id: None,
     })
 }
 
@@ -258,8 +266,10 @@ pub fn scan(config: &Config) -> ScanResult {
             from_lnk: false,
             missing: true,
             manual: true,
+            stored_id: None,
         });
         item.manual = true;
+        item.stored_id = Some(entry.id.clone());
         result.items.push(item);
     }
     result
@@ -570,6 +580,43 @@ pub mod tests {
         assert_eq!(build_entries(&result.items, &config).len(), 1);
         config.override_mut(&item.id()).removed = true;
         assert!(build_entries(&result.items, &config).is_empty());
+    }
+
+    #[test]
+    fn manual_entry_with_deleted_shortcut_keeps_its_saved_id_and_can_be_removed() {
+        let dir = temp_dir("stale");
+        let lnk = dir.join("Moved.lnk");
+        let mut config = Config::default();
+        let over = config.override_mut("saved-id");
+        over.manual = true;
+        over.source_path = Some(lnk);
+        let result = scan(&config);
+        let entries = build_entries(&result.items, &config);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "saved-id");
+        assert!(entries[0].missing);
+        config.apps.retain(|a| a.id != entries[0].id);
+        let result = scan(&config);
+        assert!(build_entries(&result.items, &config).is_empty());
+    }
+
+    #[test]
+    fn manual_entry_keeps_its_saved_id_when_the_shortcut_is_retargeted() {
+        let dir = temp_dir("retarget");
+        let exe = dir.join("new.exe");
+        touch(&exe);
+        let lnk = dir.join("Game.lnk");
+        make_lnk(&lnk, &exe, "", None);
+        let mut config = Config::default();
+        let over = config.override_mut("saved-id");
+        over.manual = true;
+        over.source_path = Some(lnk);
+        over.favorite = true;
+        let entries = build_entries(&scan(&config).items, &config);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "saved-id");
+        assert!(entries[0].favorite);
+        assert!(!entries[0].missing);
     }
 
     #[test]
