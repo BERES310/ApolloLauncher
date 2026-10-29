@@ -1,0 +1,8 @@
+/target
+/installer/.wix
+*.msi
+*.wixobj
+*.wixpdb
+/.cargo
+/data
+/target-clean
